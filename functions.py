@@ -133,20 +133,6 @@ def get_status_by_age_group(AGE_DATA, MortalityRate,death_prediction: int, recov
 
     return age_data.iloc[:, -4:]
 
-class TrueInfectedCasesModel:
-    """
-    Used to estimate total number of true infected persons based on either number of diagnosed cases or number of deaths.
-    """
-
-    def __init__(self, ascertainment_rate):
-        """
-        :param ascertainment_rate: Ratio of diagnosed to true number of infected persons.
-        """
-        self._ascertainment_rate = ascertainment_rate
-
-    def predict(self, diagnosed_cases):
-        return diagnosed_cases / self._ascertainment_rate
-
 
 class SIRModel:
     def __init__(
@@ -174,7 +160,7 @@ class SIRModel:
         # Death rate is amortized over the recovery period
         # since the chances of dying per day are mortality rate / number of days with infection
         self._normal_death_rate = normal_death_rate * recovery_rate
-        # Death rate of sever cases with no access to medical care.
+        # Death rate of severe cases with no access to medical care.
         self._critical_death_rate = critical_death_rate * recovery_rate
         self._hospitalization_rate = hospitalization_rate
         self._hospital_capacity = hospital_capacity
@@ -212,7 +198,7 @@ class SIRModel:
                 + self._critical_death_rate * underserved_critically_ill_proportion
             )
 
-            # Forecast
+            # Simulation with current parameters
 
             s_t = S[-1] - self._infection_rate * I[-1] * S[-1] / population
             i_t = (
@@ -247,3 +233,20 @@ class SIRModel:
             "Dead": D[:-index_to_clip],
             "Need Hospitalization": H[:-index_to_clip],
         }
+    
+
+def base_seir_model(init_vals, params, t):
+    S_0, E_0, I_0, R_0 = init_vals
+    S, E, I, R = [S_0], [E_0], [I_0], [R_0]
+    alpha, beta, gamma = params
+    dt = t[1] - t[0]
+    for _ in t[1:]:
+        next_S = S[-1] - (beta*S[-1]*I[-1])*dt
+        next_E = E[-1] + (beta*S[-1]*I[-1] - alpha*E[-1])*dt
+        next_I = I[-1] + (alpha*E[-1] - gamma*I[-1])*dt
+        next_R = R[-1] + (gamma*I[-1])*dt
+        S.append(next_S)
+        E.append(next_E)
+        I.append(next_I)
+        R.append(next_R)
+    return np.stack([S, E, I, R]).T
