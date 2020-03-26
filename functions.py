@@ -6,9 +6,16 @@ import datetime
 from dppd import dppd
 dp, X = dppd()
 import itertools
+from enum import Enum
+
+class SymptomState(Enum):
+    ASYMPTOMATIC = "asymptomatic"
+    SYMPTOMATIC = "symptomatic"
+
 """
 Preprocessing data
 """
+
 def _get_latest_bed_estimate(row):
     """Try to estimate the lastest number of beds / 1000 people """
     non_empty_estimates = [float(x) for x in row.values if float(x) > 0]
@@ -132,8 +139,7 @@ def get_status_by_age_group(AGE_DATA, MortalityRate,death_prediction: int, recov
     age_data["Recovered"] = (age_data.Infected - age_data.Dead).astype(int)
 
     return age_data.iloc[:, -4:]
-
-
+    
 class SIRModel:
     def __init__(
         self,
@@ -250,3 +256,128 @@ def base_seir_model(init_vals, params, t):
         I.append(next_I)
         R.append(next_R)
     return np.stack([S, E, I, R]).T
+    
+    
+#######################################################################
+def get_probability_of_infection_give_asymptomatic(
+    population, num_infected, asymptomatic_ratio
+):
+    """
+    Get the probability of being infected if you show no symptoms. Use Bayes:
+    P(I | A) = P(I) * P(A | I) / (P(A | I)*P(I) + P(A | I')*P(I'))
+    :param population: Total population.
+    :param num_infected: Number of infections in the population.
+    :param asymptomatic_ratio: Proportion of infected people who are asymptomatic. Equivalent to P(A | I).
+    """
+    p_i = num_infected / population
+    p = (p_i * asymptomatic_ratio) / (
+        asymptomatic_ratio * p_i + 1.0 * (1 - p_i)
+    )
+    return p
+
+class TrueInfectedCasesModel:
+    """
+    Used to estimate total number of true infected persons based on either number of diagnosed cases or number of deaths.
+    """
+
+    def __init__(self, ascertainment_rate):
+        """
+        :param ascertainment_rate: Ratio of diagnosed to true number of infected persons.
+        """
+        self._ascertainment_rate = ascertainment_rate
+
+    def predict(self, diagnosed_cases):
+        return diagnosed_cases / self._ascertainment_rate
+
+
+class AsymptomaticCasesModel:
+    """
+    Used to estimate total number of true infected persons in 3 categories:
+    - `'asymptomatic_undiagnosed'`
+    - `'symptomatic_undiagnosed'`
+    - `'diagnosed'`
+    Uses number of diagnosed cases and true cases as input.
+    """
+
+    def __init__(self, asymptomatic_rate):
+        """
+        :param asymptomatic_rate: Ratio of asymptomatic infected persons to true number of infected persons.
+        """
+        self._asymptomatic_rate = asymptomatic_rate
+
+    def predict(self, true_cases):
+        """
+        Assumes the number of diagnosed asymptomatic cases is zero.
+        Equivalent to: assumes all diagnosed cases are symptomatic
+        :param diagnosed_cases: Reported number of cases
+        :param true_cases: Estimated number of true cases
+        """
+        asymptomatic_cases = true_cases * self._asymptomatic_rate
+        symptomatic_cases = true_cases - asymptomatic_cases
+
+        cases = {
+            SymptomState.ASYMPTOMATIC : asymptomatic_cases,
+            SymptomState.SYMPTOMATIC : symptomatic_cases
+        }
+
+        return cases
+
+class AsymptomaticSIRModel(SIRModel):
+    def __init__(
+        self,
+        transmission_rate_per_contact: dict,
+        contact_rate: dict,
+        recovery_rate,
+        normal_death_rate,
+        critical_death_rate,
+        hospitalization_rate,
+        hospital_capacity,
+        asymptomatic_cases_model,
+    ):
+        super().__init__(
+            transmission_rate_per_contact,
+            contact_rate,
+            recovery_rate,
+            normal_death_rate,
+            critical_death_rate,
+            hospitalization_rate,
+            hospital_capacity
+        )
+
+        self._asymptomatic_cases_model = asymptomatic_cases_model
+
+    def _init_infection_rate(
+        self, 
+        transmission_rate_per_contact: dict,
+        contact_rate: dict,
+    ):
+        """
+        Sets self._infection_rate as a dict {SymptomState : infection_rate}
+        :param transmission_rate_per_contact: as a dict {SymptomState : transmission_rate_per_contact}
+        :param contact_rate: as a dict {SymptomState : contact_rate} 
+        """
+        
+        infection_rate = {
+            symptom_state : transmission_rate_per_contact[symptom_state] * contact_rate[symptom_state]
+            for symptom_state in SymptomState
+        }
+
+        self._infection_rate = infection_rate
+
+        return None
+
+    def _get_delta_s(self, S, I, N):
+        
+        infections_per_state = self._asymptomatic_cases_model.predict(
+            true_cases = I,
+        )
+
+        ret = sum(
+            [
+                - self._infection_rate[symptom_state] * infections_per_state[symptom_state] * S / N \
+                    for symptom_state in SymptomState
+            ]
+        ) 
+        
+        return ret    
+    

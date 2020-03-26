@@ -23,21 +23,12 @@ def plot_historical_data(df):
     fig = px.line(
         df, x="Date", y="Number", color="Status", template=TEMPLATE
     )
+    
+    fig.layout.update(
+        xaxis_title="Date",
+        font=dict(family="Arial", size=12))
+    
     _set_legends(fig)
-
-    return fig
-
-
-def plot_true_versus_confirmed(confirmed, predicted):
-    df = pd.DataFrame(
-        {
-            "Status": ["Confirmed", "Predicted"],
-            "Cases": [confirmed, predicted],
-            "Color": ["b", "r"],
-        }
-    )
-    fig = px.bar(df, x="Status", y="Cases", color="Color", template=TEMPLATE)
-    fig.layout.update(showlegend=False)
 
     return fig
 
