@@ -57,15 +57,15 @@ In this version, I have revised and made some modifications to fit my own analys
 
 ![SIR func](http://idmod.org/docs/general/_images/math/7edd99664ee58dde174cfe47bf51ade942786541.png)
 
-    **Where N (population) = S + I + R**
+**Where N (population) = S + I + R**
     
-    The model asummes:
+   The model asummes:
 
-    - The population size is fixed (i.e., no births, deaths due to disease, or deaths by natural causes)
-    - Incubation period of the infectious agent is instantaneous
-    - Duration of infectivity is same as length of the disease
-    - Completely homogeneous population with no age, spatial, or social structure
-    - The crucial factor governing disease spread is R0 (the basic reproduction rate), which is the **average number of people somebody with the disease infects.** This is a function of the number of susceptible people, the infection rate **β** and the recovery rate **γ**.
+   - The population size is fixed (i.e., no births, deaths due to disease, or deaths by natural causes)
+   - Incubation period of the infectious agent is instantaneous
+   - Duration of infectivity is same as length of the disease
+   - Completely homogeneous population with no age, spatial, or social structure
+   - The crucial factor governing disease spread is R0 (the basic reproduction rate), which is the **average number of people somebody with the disease infects.** This is a function of the number of susceptible people, the infection rate **β** and the recovery rate **γ**.
 
         **β = Probability of transmission x Number of contacts**
 
