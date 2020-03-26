@@ -15,7 +15,6 @@ class SymptomState(Enum):
 """
 Preprocessing data
 """
-
 def _get_latest_bed_estimate(row):
     """Try to estimate the lastest number of beds / 1000 people """
     non_empty_estimates = [float(x) for x in row.values if float(x) > 0]
@@ -51,8 +50,7 @@ _STATUSES_TO_SHOW = [
 ]
 
 def get_probability_of_infection_give_asymptomatic(
-    population, num_infected, asymptomatic_ratio
-):
+    population, num_infected, asymptomatic_ratio):
     """
     Get the probability of being infected if you show no symptoms. Use Bayes:
     P(I | A) = P(I) * P(A | I) / (P(A | I)*P(I) + P(A | I')*P(I'))
@@ -72,8 +70,7 @@ def get_predictions(
     num_diagnosed,
     num_recovered,
     num_deaths,
-    area_population,
-):
+    area_population,):
 
     true_cases = cases_estimator.predict(num_diagnosed)
 
@@ -109,11 +106,9 @@ def get_predictions(
 def get_status_by_age_group(AGE_DATA, MortalityRate,death_prediction: int, recovered_prediction: int):
     """
     Get outcomes segmented by age.
-
     We modify the original percentage death rates from data/age_data.csv to reflect a mortality rate that has been
     adjusted to take into account hospital capacity. The important assumption here is that age groups get infected at
     the same rate; that is, every group is equaly as likely to contract the infection.
-
     :param death_prediction: Number of deaths predicted.
     :param recovered_prediction: Number of recovered people predicted.
     :return: Outcomes by age in a DataFrame.
@@ -139,141 +134,6 @@ def get_status_by_age_group(AGE_DATA, MortalityRate,death_prediction: int, recov
     age_data["Recovered"] = (age_data.Infected - age_data.Dead).astype(int)
 
     return age_data.iloc[:, -4:]
-    
-class SIRModel:
-    def __init__(
-        self,
-        transmission_rate_per_contact,
-        contact_rate,
-        recovery_rate,
-        normal_death_rate,
-        critical_death_rate,
-        hospitalization_rate,
-        hospital_capacity,
-    ):
-        """
-        :param transmission_rate_per_contact: Prob of contact between infected and susceptible leading to infection.
-        :param contact_rate: Mean number of daily contacts between an infected individual and susceptible people.
-        :param recovery_rate: Rate of recovery of infected individuals.
-        :param normal_death_rate: Average death rate in normal conditions.
-        :param critical_death_rate: Rate of mortality among severe or critical cases that can't get access
-            to necessary medical facilities.
-        :param hospitalization_rate: Proportion of illnesses who need are severely ill and need acute medical care.
-        :param hospital_capacity: Max capacity of medical system in area.
-        """
-        self._infection_rate = transmission_rate_per_contact * contact_rate
-        self._recovery_rate = recovery_rate
-        # Death rate is amortized over the recovery period
-        # since the chances of dying per day are mortality rate / number of days with infection
-        self._normal_death_rate = normal_death_rate * recovery_rate
-        # Death rate of severe cases with no access to medical care.
-        self._critical_death_rate = critical_death_rate * recovery_rate
-        self._hospitalization_rate = hospitalization_rate
-        self._hospital_capacity = hospital_capacity
-
-    def predict(self, susceptible, infected, recovered, dead, num_days):
-        """
-        Run simulation.
-        :param susceptible: Number of susceptible people in population.
-        :param infected: Number of infected people in population.
-        :param recovered: Number of recovered people in population.
-        :param dead: Number of dead people in the population
-        :param num_days: Number of days to forecast.
-        :return: List of values for S, I, R over time steps
-        """
-        population = susceptible + infected + recovered + dead
-
-        S = [int(susceptible)]
-        I = [int(infected)]
-        R = [int(recovered)]
-        D = [int(dead)]
-        H = [round(self._hospitalization_rate * infected)]
-
-        for t in range(num_days):
-
-            # There is an additional chance of dying if people are critically ill
-            # and have no access to the medical system.
-            if I[-1] > 0:
-                underserved_critically_ill_proportion = (
-                    max(0, H[-1] - self._hospital_capacity) / I[-1]
-                )
-            else:
-                underserved_critically_ill_proportion = 0
-            weighted_death_rate = (
-                self._normal_death_rate * (1 - underserved_critically_ill_proportion)
-                + self._critical_death_rate * underserved_critically_ill_proportion
-            )
-
-            # Simulation with current parameters
-
-            s_t = S[-1] - self._infection_rate * I[-1] * S[-1] / population
-            i_t = (
-                I[-1]
-                + self._infection_rate * I[-1] * S[-1] / population
-                - (weighted_death_rate + self._recovery_rate) * I[-1]
-            )
-            r_t = R[-1] + self._recovery_rate * I[-1]
-            d_t = D[-1] + weighted_death_rate * I[-1]
-
-            h_t = self._hospitalization_rate * i_t
-
-            S.append(round(s_t))
-            I.append(round(i_t))
-            R.append(round(r_t))
-            D.append(round(d_t))
-            H.append(round(h_t))
-
-        # Days with no change in I
-        days_to_clip = [I[-i] == I[-i - 1] for i in range(1, len(I))]
-        index_to_clip = days_to_clip.index(False)
-        if index_to_clip == 0:
-            index_to_clip = 1
-
-        # Look at at least a few months
-        index_to_clip = min(index_to_clip, _DEFAULT_TIME_SCALE - 3 * 31)
-
-        return {
-            "Susceptible": S[:-index_to_clip],
-            "Infected": I[:-index_to_clip],
-            "Recovered": R[:-index_to_clip],
-            "Dead": D[:-index_to_clip],
-            "Need Hospitalization": H[:-index_to_clip],
-        }
-    
-
-def base_seir_model(init_vals, params, t):
-    S_0, E_0, I_0, R_0 = init_vals
-    S, E, I, R = [S_0], [E_0], [I_0], [R_0]
-    alpha, beta, gamma = params
-    dt = t[1] - t[0]
-    for _ in t[1:]:
-        next_S = S[-1] - (beta*S[-1]*I[-1])*dt
-        next_E = E[-1] + (beta*S[-1]*I[-1] - alpha*E[-1])*dt
-        next_I = I[-1] + (alpha*E[-1] - gamma*I[-1])*dt
-        next_R = R[-1] + (gamma*I[-1])*dt
-        S.append(next_S)
-        E.append(next_E)
-        I.append(next_I)
-        R.append(next_R)
-    return np.stack([S, E, I, R]).T
-    
-    
-#######################################################################
-def get_probability_of_infection_give_asymptomatic(
-    population, num_infected, asymptomatic_ratio
-):
-    """
-    Get the probability of being infected if you show no symptoms. Use Bayes:
-    P(I | A) = P(I) * P(A | I) / (P(A | I)*P(I) + P(A | I')*P(I'))
-    :param population: Total population.
-    :param num_infected: Number of infections in the population.
-    :param asymptomatic_ratio: Proportion of infected people who are asymptomatic. Equivalent to P(A | I).
-    """
-    p_i = num_infected / population
-    p = (p_i * asymptomatic_ratio) / (
-        asymptomatic_ratio * p_i + 1.0 * (1 - p_i)
-    )
-    return p
 
 class TrueInfectedCasesModel:
     """
@@ -289,7 +149,107 @@ class TrueInfectedCasesModel:
     def predict(self, diagnosed_cases):
         return diagnosed_cases / self._ascertainment_rate
 
+# class SIRModel:
+#     def __init__(
+#         self,
+#         transmission_rate_per_contact,
+#         contact_rate,
+#         recovery_rate,
+#         normal_death_rate,
+#         critical_death_rate,
+#         hospitalization_rate,
+#         hospital_capacity,
+#     ):
+#         """
+#         :param transmission_rate_per_contact: Prob of contact between infected and susceptible leading to infection.
+#         :param contact_rate: Mean number of daily contacts between an infected individual and susceptible people.
+#         :param recovery_rate: Rate of recovery of infected individuals.
+#         :param normal_death_rate: Average death rate in normal conditions.
+#         :param critical_death_rate: Rate of mortality among severe or critical cases that can't get access
+#             to necessary medical facilities.
+#         :param hospitalization_rate: Proportion of illnesses who need are severely ill and need acute medical care.
+#         :param hospital_capacity: Max capacity of medical system in area.
+#         """
+#         self._infection_rate = transmission_rate_per_contact * contact_rate
+#         self._recovery_rate = recovery_rate
+#         # Death rate is amortized over the recovery period
+#         # since the chances of dying per day are mortality rate / number of days with infection
+#         self._normal_death_rate = normal_death_rate * recovery_rate
+#         # Death rate of sever cases with no access to medical care.
+#         self._critical_death_rate = critical_death_rate * recovery_rate
+#         self._hospitalization_rate = hospitalization_rate
+#         self._hospital_capacity = hospital_capacity
 
+#     def predict(self, susceptible, infected, recovered, dead, num_days):
+#         """
+#         Run simulation.
+#         :param susceptible: Number of susceptible people in population.
+#         :param infected: Number of infected people in population.
+#         :param recovered: Number of recovered people in population.
+#         :param dead: Number of dead people in the population
+#         :param num_days: Number of days to forecast.
+#         :return: List of values for S, I, R over time steps
+#         """
+#         population = susceptible + infected + recovered + dead
+
+#         S = [int(susceptible)]
+#         I = [int(infected)]
+#         R = [int(recovered)]
+#         D = [int(dead)]
+#         H = [round(self._hospitalization_rate * infected)]
+
+#         for t in range(num_days):
+
+#             # There is an additional chance of dying if people are critically ill
+#             # and have no access to the medical system.
+#             if I[-1] > 0:
+#                 underserved_critically_ill_proportion = (
+#                     max(0, H[-1] - self._hospital_capacity) / I[-1]
+#                 )
+#             else:
+#                 underserved_critically_ill_proportion = 0
+#             weighted_death_rate = (
+#                 self._normal_death_rate * (1 - underserved_critically_ill_proportion)
+#                 + self._critical_death_rate * underserved_critically_ill_proportion
+#             )
+
+#             # Forecast
+
+#             s_t = S[-1] - self._infection_rate * I[-1] * S[-1] / population
+#             i_t = (
+#                 I[-1]
+#                 + self._infection_rate * I[-1] * S[-1] / population
+#                 - (weighted_death_rate + self._recovery_rate) * I[-1]
+#             )
+#             r_t = R[-1] + self._recovery_rate * I[-1]
+#             d_t = D[-1] + weighted_death_rate * I[-1]
+
+#             h_t = self._hospitalization_rate * i_t
+
+#             S.append(round(s_t))
+#             I.append(round(i_t))
+#             R.append(round(r_t))
+#             D.append(round(d_t))
+#             H.append(round(h_t))
+
+#         # Days with no change in I
+#         days_to_clip = [I[-i] == I[-i - 1] for i in range(1, len(I))]
+#         index_to_clip = days_to_clip.index(False)
+#         if index_to_clip == 0:
+#             index_to_clip = 1
+
+#         # Look at at least a few months
+#         index_to_clip = min(index_to_clip, _DEFAULT_TIME_SCALE - 3 * 31)
+
+#         return {
+#             "Susceptible": S[:-index_to_clip],
+#             "Infected": I[:-index_to_clip],
+#             "Recovered": R[:-index_to_clip],
+#             "Dead": D[:-index_to_clip],
+#             "Need Hospitalization": H[:-index_to_clip],
+#         }
+    
+###############################
 class AsymptomaticCasesModel:
     """
     Used to estimate total number of true infected persons in 3 categories:
@@ -321,6 +281,121 @@ class AsymptomaticCasesModel:
         }
 
         return cases
+
+class SIRModel:
+    def __init__(
+        self,
+        transmission_rate_per_contact,
+        contact_rate,
+        recovery_rate,
+        normal_death_rate,
+        critical_death_rate,
+        hospitalization_rate,
+        hospital_capacity,
+    ):
+        """
+        :param transmission_rate_per_contact: Prob of contact between infected and susceptible leading to infection.
+        :param contact_rate: Mean number of daily contacts between an infected individual and susceptible people.
+        :param recovery_rate: Rate of recovery of infected individuals.
+        :param normal_death_rate: Average death rate in normal conditions.
+        :param critical_death_rate: Rate of mortality among severe or critical cases that can't get access
+            to necessary medical facilities.
+        :param hospitalization_rate: Proportion of illnesses who need are severely ill and need acute medical care.
+        :param hospital_capacity: Max capacity of medical system in area.
+        """
+        self._init_infection_rate(transmission_rate_per_contact, contact_rate)
+        self._recovery_rate = recovery_rate
+        # Death rate is amortized over the recovery period
+        # since the chances of dying per day are mortality rate / number of days with infection
+        self._normal_death_rate = normal_death_rate * recovery_rate
+        # Death rate of sever cases with no access to medical care.
+        self._critical_death_rate = critical_death_rate * recovery_rate
+        self._hospitalization_rate = hospitalization_rate
+        self._hospital_capacity = hospital_capacity
+
+    def _init_infection_rate(self, transmission_rate_per_contact, contact_rate):
+        self._infection_rate = transmission_rate_per_contact * contact_rate
+        
+
+    def _get_delta_s(self, S, I, N):
+        """
+        :param S: Number of susceptible people in population.
+        :param I: Number of infected people in population.
+        :param N: Total population. 
+        """
+
+        return - self._infection_rate * I * S / N
+        
+    def predict(self, susceptible, infected, recovered, dead, num_days):
+        """
+        Run simulation.
+        :param susceptible: Starting number of susceptible people in population.
+        :param infected: Starting number of infected people in population.
+        :param recovered: Starting number of recovered people in population.
+        :param dead: Starting number of dead people in the population
+        :param num_days: Number of days to forecast.
+        :return: List of values for S, I, R over time steps
+        """
+        population = susceptible + infected + recovered + dead
+
+        S = [int(susceptible)]
+        I = [int(infected)]
+        R = [int(recovered)]
+        D = [int(dead)]
+        H = [round(self._hospitalization_rate * infected)]
+
+        for t in range(num_days):
+
+            # There is an additional chance of dying if people are critically ill
+            # and have no access to the medical system.
+            if I[-1] > 0:
+                underserved_critically_ill_proportion = (
+                    max(0, H[-1] - self._hospital_capacity) / I[-1]
+                )
+            else:
+                underserved_critically_ill_proportion = 0
+            weighted_death_rate = (
+                self._normal_death_rate * (1 - underserved_critically_ill_proportion)
+                + self._critical_death_rate * underserved_critically_ill_proportion
+            )
+
+            # Forecast
+
+            delta_s_t = self._get_delta_s(S[-1], I[-1], population)
+
+            s_t = S[-1] + delta_s_t 
+            i_t = (
+                I[-1]
+                - delta_s_t
+                - (weighted_death_rate + self._recovery_rate) * I[-1]
+            )
+            r_t = R[-1] + self._recovery_rate * I[-1]
+            d_t = D[-1] + weighted_death_rate * I[-1]
+
+            h_t = self._hospitalization_rate * i_t
+
+            S.append(round(s_t))
+            I.append(round(i_t))
+            R.append(round(r_t))
+            D.append(round(d_t))
+            H.append(round(h_t))
+
+        # Days with no change in I
+        days_to_clip = [I[-i] == I[-i - 1] for i in range(1, len(I))]
+        index_to_clip = days_to_clip.index(False)
+        if index_to_clip == 0:
+            index_to_clip = 1
+
+        # Look at at least a few months
+        index_to_clip = min(index_to_clip, _DEFAULT_TIME_SCALE - 3 * 31)
+
+        return {
+            "Susceptible": S[:-index_to_clip],
+            "Infected": I[:-index_to_clip],
+            "Recovered": R[:-index_to_clip],
+            "Dead": D[:-index_to_clip],
+            "Need Hospitalization": H[:-index_to_clip],
+        }
 
 class AsymptomaticSIRModel(SIRModel):
     def __init__(
@@ -379,5 +454,5 @@ class AsymptomaticSIRModel(SIRModel):
             ]
         ) 
         
-        return ret    
+        return ret
     
