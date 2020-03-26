@@ -52,7 +52,9 @@ In this version, I have revised and made some modifications to fit my own analys
 
 
 1. **SIR model:**
+
 ![SIR Model](https://upload.wikimedia.org/wikipedia/commons/8/8a/SIR.PNG)
+
 ![SIR func](http://idmod.org/docs/general/_images/math/7edd99664ee58dde174cfe47bf51ade942786541.png)
 
     **Where N (population) = S + I + R**
@@ -71,8 +73,11 @@ In this version, I have revised and made some modifications to fit my own analys
 
 
 2. **SEIR model:**
+
 ![SEIR Model](https://upload.wikimedia.org/wikipedia/commons/3/3d/SEIR.PNG)
+
 ![SEIR func](http://idmod.org/docs/general/_images/math/5c34ba7654b6b1031ac83c60ea98007456d22ee3.png)
+
 
 With vital dynamics (birth + death rate)
 
