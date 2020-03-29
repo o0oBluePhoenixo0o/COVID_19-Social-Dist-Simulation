@@ -222,19 +222,23 @@ def seir_model_with_soc_dist(init_vals, params, t):
         try:
             next_D = D[0] + deaths_case(I[-h_to_d], AGE_DATA, CDR, no_hospital_beds)
         except:
-            # if I[-h_to_d] is not exist yet before I_0
-            # use historical active infected cases [h_to_d] days ago
-            past_date = datetime.strftime(datetime.now() + timedelta(_) -timedelta(h_to_d),"%m/%d/%y")
-            past_date = past_date[-(len(past_date) -1) :]
-            past_h_to_d = get_cases_number(past_date,
-                                                target_country,
-                                                global_confirmed,
-                                                global_recovered,
-                                                global_death)
-            # Get active infected case in the past
-            past_I = past_h_to_d[1] - past_h_to_d[0] - past_h_to_d[2]
-            next_D = D[0] + deaths_case(past_I,AGE_DATA,CDR, no_hospital_beds)
-            
+            try:
+                # if I[-h_to_d] is not exist yet before I_0
+                # use historical active infected cases [h_to_d] days ago
+                past_date = datetime.strftime(datetime.now() + timedelta(_) - timedelta(h_to_d),"%m/%d/%y")
+                past_date = past_date[-(len(past_date) -1) :]
+                past_h_to_d = get_cases_number(past_date,
+                                                    target_country,
+                                                    global_confirmed,
+                                                    global_recovered,
+                                                    global_death)
+                # Get active infected case in the past
+                past_I = past_h_to_d[1] - past_h_to_d[0] - past_h_to_d[2]
+                next_D = D[0] + deaths_case(past_I,AGE_DATA,CDR, no_hospital_beds)
+            except:
+                # in the event of yesterday data was not updated --> temporary use yesterday data
+                next_D = D[-1]
+                
         next_CD = CD[-1] + next_D
         
         S.append(round(next_S))
@@ -244,6 +248,7 @@ def seir_model_with_soc_dist(init_vals, params, t):
         H.append(round(next_H))
         D.append(round(next_D))
         CD.append(round(next_CD))
+        if (next_I <= 0): break
         
     return np.stack([S, E, I, R, H, D, CD]).T
 
