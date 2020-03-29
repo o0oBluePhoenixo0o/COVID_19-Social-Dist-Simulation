@@ -5,6 +5,11 @@ import re
 import datetime
 from datetime import datetime, timedelta
 
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+
 # dplyr-style for python
 from dppd import dppd
 dp, X = dppd()
@@ -15,6 +20,9 @@ _DEFAULT_TIME_SCALE = 12 * 3 * 31  # 36 months
 """
 Preprocessing data
 """
+# Convert string percentage to integer
+def a(m):e=m.strip("%");f=float(e);return f/100if e!=m else str(f*100)+"%"
+
 def _get_latest_bed_estimate(row):
     """Try to estimate the lastest number of beds / 1000 people """
     non_empty_estimates = [float(x) for x in row.values if float(x) > 0]
@@ -74,17 +82,17 @@ def prepare_historical_df(target_country,
                      .select(["-Province/State",'-Lat','-Long','-Country'])
                      .set_index('Type')
                     .pd)
-    confirmed = pd.DataFrame(historical_df.iloc[0]).rename_axis('Date').reset_index()
+    confirmed = pd.DataFrame(historical_df.iloc[1]).rename_axis('Date').reset_index()
     confirmed['Date'] = pd.to_datetime(confirmed['Date']) 
     confirmed['Status'] = "Confirmed"
     confirmed.columns = ['Date', 'Number', 'Status']
 
-    deaths = pd.DataFrame(historical_df.iloc[1]).rename_axis('Date').reset_index()
+    deaths = pd.DataFrame(historical_df.iloc[2]).rename_axis('Date').reset_index()
     deaths['Date'] = pd.to_datetime(confirmed['Date']) 
     deaths['Status'] = "Deaths"
     deaths.columns = ['Date', 'Number', 'Status']
 
-    recovered = pd.DataFrame(historical_df.iloc[2]).rename_axis('Date').reset_index()
+    recovered = pd.DataFrame(historical_df.iloc[0]).rename_axis('Date').reset_index()
     recovered['Date'] = pd.to_datetime(confirmed['Date']) 
     recovered['Status'] = "Recovered"
     recovered.columns = ['Date', 'Number', 'Status']
@@ -117,99 +125,200 @@ def get_cases_number(target_date,
     return (number_cases_deaths,number_cases_confirmed,number_cases_recovered)
 
 
+def hospitalized_case(no_active_case, AGE_DATA):
+    """ Calculated hospitalization cases"""
+    AGE_DATA['Hospitalized_case'] = round(AGE_DATA['Proportion_DE_2020'] * no_active_case * AGE_DATA['Hospitalization Rate'])
+    no_h = AGE_DATA['Hospitalized_case'].sum()
+    
+    return no_h
 
 """
 Model building
 """
 
-# Credited to Christian Hubbs @https://www.datahubbs.com/
+def hospitalized_case(I, AGE_DATA):
+    """ Calculated hospitalization cases"""
+    AGE_DATA['Snapshot_hospitalized'] = round(AGE_DATA['Proportion_DE_2020'] * 
+                                          I * 
+                                          AGE_DATA['Hospitalization Rate'])
+    
+    no_h = AGE_DATA['Snapshot_hospitalized'].sum()
+    
+    return no_h
+
+def deaths_case(I, 
+                AGE_DATA,
+                CDR, 
+                no_hospital_beds):
+    """ Calculated death cases, if active cases over capacity ==> use critical death rate"""
+    
+    if hospitalized_case(I, AGE_DATA) <= no_hospital_beds :
+        # Number of deaths with hospitalization
+        AGE_DATA['Snapshot_deaths'] = round(AGE_DATA['Proportion_DE_2020']
+                                         * hospitalized_case(I, AGE_DATA)
+                                         * AGE_DATA['Mortality'])
+        
+        # Minus yesterday_deaths to get number of NEW deaths
+        no_Snapshot_d = AGE_DATA['Snapshot_deaths'].sum()
+        AGE_DATA['Total_Deaths'] = AGE_DATA['Total_Deaths'] + (AGE_DATA['Snapshot_deaths'])
+        
+    else:
+        # Number of death cases without hospitalization (critial but no hospital beds)
+        no_without_beds = hospitalized_case(I, AGE_DATA) - no_hospital_beds
+        AGE_DATA['Snapshot_deaths_no_beds'] = round(AGE_DATA['Proportion_DE_2020'] * 
+                                                    no_without_beds * 
+                                                    CDR)
+        # Number of deaths with hospitalization
+        AGE_DATA['Snapshot_deaths'] = round(AGE_DATA['Proportion_DE_2020'] * 
+                                            no_hospital_beds * 
+                                            AGE_DATA['Mortality'])
+        
+        # Minus yesterday_deaths to get number of NEW deaths
+        no_Snapshot_d = AGE_DATA['Snapshot_deaths'].sum() + AGE_DATA['Snapshot_deaths_no_beds'].sum()
+        # Deaths due to no beds
+        AGE_DATA['Total_Deaths_no_beds'] = AGE_DATA['Total_Deaths_no_beds'] + AGE_DATA['Snapshot_deaths_no_beds']
+        AGE_DATA['Total_Deaths'] = AGE_DATA['Total_Deaths'] + (AGE_DATA['Snapshot_deaths'] + AGE_DATA['Snapshot_deaths_no_beds'])
+    
+    return no_Snapshot_d
+
+
+# Modifed from Christian Hubbs @https://www.datahubbs.com/
 def seir_model_with_soc_dist(init_vals, params, t):
     """Susceptible - Exposed - Infected - Recovered
+    Infected cases here is the number of current active cases!
     """
     # Get initial values
-    S_0, E_0, I_0, R_0 = init_vals
-    S, E, I, R = [S_0], [E_0], [I_0], [R_0]
-    delta, beta, gamma, social_dist = params
+    S_0, E_0, I_0, R_0, H_0, D_0, CD_0 = init_vals
+    S, E, I, R, H, D, CD = [S_0], [E_0], [I_0], [R_0], [H_0], [D_0], [CD_0]
     
-    # Total population = S + E + I + R
-    N = S_0 + E_0 + I_0 + R_0
+    (delta, beta, gamma, 
+     no_hospital_beds, # healthcare capacity
+     social_dist, # social distance factor
+     CDR, #critical death rate without hospitalization
+     AGE_DATA,
+     target_country,
+     global_confirmed,
+     global_death,
+     global_recovered,
+     h_to_d) = params
     
+    # Total population = S + E + I (active cases) + R + D
+    N = S_0 + E_0 + I_0 + R_0 + D_0
+        
     for _ in t[1:]:
         next_S = S[-1] - (social_dist*beta*S[-1]*I[-1])/N
         next_E = E[-1] + (social_dist*beta*S[-1]*I[-1])/N - delta*E[-1]
-        next_I = I[-1] + (delta*E[-1] - gamma*I[-1])
-        next_R = R[-1] + (gamma*I[-1])
-        next_H = 
+        
+        # Current Infected cases 
+        # = Yesterday infected cases + (new exposed cases - recovered - deaths)
+        next_I = I[-1] + (delta*E[-1] - gamma*I[-1]) - D[-1]
+        # Current recovered = new recovered - deaths
+        next_R = R[-1] + (gamma*I[-1]) - D[-1]
+        
+        # Hospitalized case (part of current Infected cases)
+        next_H = hospitalized_case(next_I, AGE_DATA)
+        
+        # Estimate death cases with the hospitalized case [h_to_d] days ago
+        try:
+            next_D = D[0] + deaths_case(I[-h_to_d], AGE_DATA, CDR, no_hospital_beds)
+        except:
+            # if I[-h_to_d] is not exist yet before I_0
+            # use historical active infected cases [h_to_d] days ago
+            past_date = datetime.strftime(datetime.now() + timedelta(_) -timedelta(h_to_d),"%m/%d/%y")
+            past_date = past_date[-(len(past_date) -1) :]
+            past_h_to_d = get_cases_number(past_date,
+                                                target_country,
+                                                global_confirmed,
+                                                global_recovered,
+                                                global_death)
+            # Get active infected case in the past
+            past_I = past_h_to_d[1] - past_h_to_d[0] - past_h_to_d[2]
+            next_D = D[0] + deaths_case(past_I,AGE_DATA,CDR, no_hospital_beds)
+            
+        next_CD = CD[-1] + next_D
+        
         S.append(round(next_S))
         E.append(round(next_E))
         I.append(round(next_I))
         R.append(round(next_R))
-    return np.stack([S, E, I, R]).T
+        H.append(round(next_H))
+        D.append(round(next_D))
+        CD.append(round(next_CD))
+        
+    return np.stack([S, E, I, R, H, D, CD]).T
 
-#             # Forecast
-#             s_t = S[-1] - self._infection_rate * I[-1] * S[-1] / population
-#             i_t = (I[-1]+ self._infection_rate * I[-1] * S[-1] / population- (weighted_death_rate + self._recovery_rate) * I[-1])
-#             r_t = R[-1] + self._recovery_rate * I[-1]
-#             d_t = D[-1] + weighted_death_rate * I[-1]
-#             h_t = self._hospitalization_rate * i_t
+"""
+Graphics
+"""
 
+TEMPLATE = "plotly_white"
+_SUSCEPTIBLE_COLOR = "rgba(230,230,230,.4)"
+_RECOVERED_COLOR = "rgba(180,200,180,.4)"
 
+COLOR_MAP = {
+    "default": "#262730",
+    "pink": "#E22A5B",
+    "purple": "#985FFF",
+    "susceptible": _SUSCEPTIBLE_COLOR,
+    "recovered": _RECOVERED_COLOR,} 
 
-#         for t in range(num_days):
-#             # There is an additional chance of dying if people are critically ill
-#             # and have no access to the medical system.
-#             if I[-1] > 0:
-#                 underserved_critically_ill_proportion = (
-#                     max(0, H[-1] - self._hospital_capacity) / I[-1]
-#                 )
-#             else:
-#                 underserved_critically_ill_proportion = 0
-#             weighted_death_rate = (self._normal_death_rate * (1 - underserved_critically_ill_proportion)
-#                 + self._critical_death_rate * underserved_critically_ill_proportion)
-
-#         # Days with no change in I
-#         days_to_clip = [I[-i] == I[-i - 1] for i in range(1, len(I))]
-#         index_to_clip = days_to_clip.index(False)
-#         if index_to_clip == 0:
-#             index_to_clip = 1
-#         # Look at at least a few months
-#         index_to_clip = min(index_to_clip, _DEFAULT_TIME_SCALE - 3 * 31)
+def _set_legends(fig):
+    fig.layout.update(legend=dict(x=-0.1, y=1.2))
+    fig.layout.update(legend_orientation="h")
 
 
-
-def get_status_by_age_group(AGE_DATA, MortalityRate,
-                            death_prediction: int, 
-                            recovered_prediction: int):
-    """
-    @Credited to Element AI's team for this function
-    
-    Get outcomes segmented by age.
-    We modify the original percentage death rates from data/age_data.csv to reflect a mortality rate that has been
-    adjusted to take into account hospital capacity. The important assumption here is that age groups get infected at
-    the same rate; that is, every group is equaly as likely to contract the infection.
-    
-    :param death_prediction: Number of deaths predicted.
-    :param recovered_prediction: Number of recovered people predicted.
-    :return: Outcomes by age in a DataFrame.
-    """
-    age_data = AGE_DATA
-    infections_prediction = recovered_prediction + death_prediction
-
-    # Effective mortality rate may be different than the one defined in data/constants.py because once we reach
-    # hospital capacity, we increase the death rate. We assume the increase in death rate will be proportional, even
-    # though it probably won't be since more old people require medical care, and thus will see increased mortality
-    # when the medical system reaches capacity.
-    effective_death_rate = death_prediction / infections_prediction
-    death_increase_ratio = effective_death_rate / MortalityRate
-
-    # Get outcomes by age
-    age_data["Infected"] = (AGE_DATA.Proportion_DE_2020 * infections_prediction).astype(int)
-    age_data["Need Hospitalization"] = (
-        age_data["Hospitalization Rate"] * age_data.Infected
+def plot_historical_data(df):
+    fig = px.line(
+        df, x="Date", y="Number", color="Status", template=TEMPLATE
     )
-    age_data["Dead"] = (
-        age_data.Mortality * death_increase_ratio * age_data.Infected
-    ).astype(int)
-    age_data["Recovered"] = (age_data.Infected - age_data.Dead).astype(int)
+    
+    fig.layout.update(
+        xaxis_title="Date",
+        font=dict(family="Arial", size=12))
+    
+    _set_legends(fig)
 
-    return age_data.iloc[:, -4:]
+    return fig
+
+
+def num_beds_occupancy_comparison_chart(num_beds_available, max_num_beds_needed):
+    """
+    A horizontal bar chart comparing # of beds available compared to 
+    max number number of beds needed
+    """
+    num_beds_available, max_num_beds_needed = (
+        int(num_beds_available),
+        int(max_num_beds_needed),
+    )
+
+    df = pd.DataFrame(
+        {
+            "Label": ["Total Beds ", "Peak Occupancy "],
+            "Value": [num_beds_available, max_num_beds_needed],
+            "Text": [f"{num_beds_available:,}  ", f"{max_num_beds_needed:,}  "],
+            "Color": ["b", "r"],
+        }
+    )
+    fig = px.bar(
+        df,
+        x="Value",
+        y="Label",
+        color="Color",
+        text="Text",
+        orientation="h",
+        opacity=0.7,
+        template=TEMPLATE,
+        height=300,
+    )
+
+    fig.layout.update(
+        showlegend=False,
+        xaxis_title="",
+        xaxis_showticklabels=False,
+        yaxis_title="",
+        yaxis_showticklabels=True,
+        font=dict(family="Arial", size=15, color=COLOR_MAP["default"]),
+    )
+    fig.update_traces(textposition="outside", cliponaxis=False)
+
+    return fig
