@@ -126,24 +126,90 @@ Model building
 def seir_model_with_soc_dist(init_vals, params, t):
     """Susceptible - Exposed - Infected - Recovered
     """
+    # Get initial values
     S_0, E_0, I_0, R_0 = init_vals
     S, E, I, R = [S_0], [E_0], [I_0], [R_0]
     delta, beta, gamma, social_dist = params
-    dt = t[1] - t[0]
+    
+    # Total population = S + E + I + R
+    N = S_0 + E_0 + I_0 + R_0
+    
     for _ in t[1:]:
         next_S = S[-1] - (social_dist*beta*S[-1]*I[-1])/N
-        next_E = E[-1] + (social_dist*beta*S[-1]*I[-1] - delta*E[-1])*dt
-        next_I = I[-1] + (delta*E[-1] - gamma*I[-1])/N
-        next_R = R[-1] + (gamma*I[-1])/N
-        
+        next_E = E[-1] + (social_dist*beta*S[-1]*I[-1])/N - delta*E[-1]
+        next_I = I[-1] + (delta*E[-1] - gamma*I[-1])
+        next_R = R[-1] + (gamma*I[-1])
+        next_H = 
         S.append(round(next_S))
         E.append(round(next_E))
         I.append(round(next_I))
         R.append(round(next_R))
     return np.stack([S, E, I, R]).T
 
+#             # Forecast
+#             s_t = S[-1] - self._infection_rate * I[-1] * S[-1] / population
+#             i_t = (I[-1]+ self._infection_rate * I[-1] * S[-1] / population- (weighted_death_rate + self._recovery_rate) * I[-1])
+#             r_t = R[-1] + self._recovery_rate * I[-1]
+#             d_t = D[-1] + weighted_death_rate * I[-1]
+#             h_t = self._hospitalization_rate * i_t
 
-#        s_t = S[-1] - self._infection_rate * I[-1] * S[-1] / population
-#        i_t = (I[-1] + self._infection_rate * I[-1] * S[-1] / population - (weighted_death_rate + self._recovery_rate) * I[-1])
-#        r_t = R[-1] + self._recovery_rate * I[-1]
 
+
+#         for t in range(num_days):
+#             # There is an additional chance of dying if people are critically ill
+#             # and have no access to the medical system.
+#             if I[-1] > 0:
+#                 underserved_critically_ill_proportion = (
+#                     max(0, H[-1] - self._hospital_capacity) / I[-1]
+#                 )
+#             else:
+#                 underserved_critically_ill_proportion = 0
+#             weighted_death_rate = (self._normal_death_rate * (1 - underserved_critically_ill_proportion)
+#                 + self._critical_death_rate * underserved_critically_ill_proportion)
+
+#         # Days with no change in I
+#         days_to_clip = [I[-i] == I[-i - 1] for i in range(1, len(I))]
+#         index_to_clip = days_to_clip.index(False)
+#         if index_to_clip == 0:
+#             index_to_clip = 1
+#         # Look at at least a few months
+#         index_to_clip = min(index_to_clip, _DEFAULT_TIME_SCALE - 3 * 31)
+
+
+
+def get_status_by_age_group(AGE_DATA, MortalityRate,
+                            death_prediction: int, 
+                            recovered_prediction: int):
+    """
+    @Credited to Element AI's team for this function
+    
+    Get outcomes segmented by age.
+    We modify the original percentage death rates from data/age_data.csv to reflect a mortality rate that has been
+    adjusted to take into account hospital capacity. The important assumption here is that age groups get infected at
+    the same rate; that is, every group is equaly as likely to contract the infection.
+    
+    :param death_prediction: Number of deaths predicted.
+    :param recovered_prediction: Number of recovered people predicted.
+    :return: Outcomes by age in a DataFrame.
+    """
+    age_data = AGE_DATA
+    infections_prediction = recovered_prediction + death_prediction
+
+    # Effective mortality rate may be different than the one defined in data/constants.py because once we reach
+    # hospital capacity, we increase the death rate. We assume the increase in death rate will be proportional, even
+    # though it probably won't be since more old people require medical care, and thus will see increased mortality
+    # when the medical system reaches capacity.
+    effective_death_rate = death_prediction / infections_prediction
+    death_increase_ratio = effective_death_rate / MortalityRate
+
+    # Get outcomes by age
+    age_data["Infected"] = (AGE_DATA.Proportion_DE_2020 * infections_prediction).astype(int)
+    age_data["Need Hospitalization"] = (
+        age_data["Hospitalization Rate"] * age_data.Infected
+    )
+    age_data["Dead"] = (
+        age_data.Mortality * death_increase_ratio * age_data.Infected
+    ).astype(int)
+    age_data["Recovered"] = (age_data.Infected - age_data.Dead).astype(int)
+
+    return age_data.iloc[:, -4:]
