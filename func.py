@@ -10,6 +10,8 @@ from dppd import dppd
 dp, X = dppd()
 import itertools
 
+_DEFAULT_TIME_SCALE = 12 * 3 * 31  # 36 months
+
 """
 Preprocessing data
 """
@@ -129,12 +131,19 @@ def seir_model_with_soc_dist(init_vals, params, t):
     delta, beta, gamma, social_dist = params
     dt = t[1] - t[0]
     for _ in t[1:]:
-        next_S = S[-1] - (social_dist*beta*S[-1]*I[-1])*dt
+        next_S = S[-1] - (social_dist*beta*S[-1]*I[-1])/N
         next_E = E[-1] + (social_dist*beta*S[-1]*I[-1] - delta*E[-1])*dt
-        next_I = I[-1] + (delta*E[-1] - gamma*I[-1])*dt
-        next_R = R[-1] + (gamma*I[-1])*dt
-        S.append(next_S)
-        E.append(next_E)
-        I.append(next_I)
-        R.append(next_R)
+        next_I = I[-1] + (delta*E[-1] - gamma*I[-1])/N
+        next_R = R[-1] + (gamma*I[-1])/N
+        
+        S.append(round(next_S))
+        E.append(round(next_E))
+        I.append(round(next_I))
+        R.append(round(next_R))
     return np.stack([S, E, I, R]).T
+
+
+#        s_t = S[-1] - self._infection_rate * I[-1] * S[-1] / population
+#        i_t = (I[-1] + self._infection_rate * I[-1] * S[-1] / population - (weighted_death_rate + self._recovery_rate) * I[-1])
+#        r_t = R[-1] + self._recovery_rate * I[-1]
+
