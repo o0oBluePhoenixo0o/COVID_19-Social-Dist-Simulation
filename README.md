@@ -1,3 +1,14 @@
+Link to medium article: https://towardsdatascience.com/covid-19-social-distancing-simulation-f091a58732f9
+
+## Disclaimer
+
+I am not an epidemiologist so I can’t guarantee 100% that the scenarios above will become reality. I believe the visualizations would help explaining the impact of “social distancing” and through that, I want to emphasize that everyone plays an important role here in this pandemic.
+
+Please keep in mind that this is a simple SEIR+DH model and the available data used to train the model was limited in the moment of writing the article. 
+
+Furthermore, I hope this will inspire people to explore more on the numbers and models beside sticking to just mainstream medias and potentially not-so-reliable news.
+
+
 ## Introduction
 
 The purpose of this analysis is to make best "guess" on when is the time for us to get back to our normal lives in **Germany**.
@@ -178,8 +189,4 @@ As you can see, if everyone really follows the rules, the total number of deaths
 ## Acknowledgements
 
 Inspired from **Element AI** team's *corona-calculator* (https://corona-calculator.herokuapp.com/) and **Christian Hubbs**'s dynamic diffusion models for epidemiology (https://www.datahubbs.com/)
-## Closing up...
 
-I am not an epidemiologist so I can't guarantee 100% that the scenarios above will become reality. However, I believe the charts I created would somehow explain the impact of "social distancing" to this pandemic and hopefully everyone would follow the guideline. Please keep in mind that this is a simple SEIR+DH model and the available data used to train the model was limited in the moment of writing the article. 
-
-Furthermore, I hope this will inspire people to explore more on the numbers and models beside sticking to just mainstream medias and potentially not-so-reliable news.
