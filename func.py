@@ -124,14 +124,6 @@ def get_cases_number(target_date,
                      .pd).iloc[0][target_date]
     return (number_cases_deaths,number_cases_confirmed,number_cases_recovered)
 
-
-def hospitalized_case(no_active_case, AGE_DATA):
-    """ Calculated hospitalization cases"""
-    AGE_DATA['Hospitalized_case'] = round(AGE_DATA['Proportion_DE_2020'] * no_active_case * AGE_DATA['Hospitalization Rate'])
-    no_h = AGE_DATA['Hospitalized_case'].sum()
-    
-    return no_h
-
 """
 Model building
 """
@@ -146,31 +138,32 @@ def hospitalized_case(I, AGE_DATA):
     
     return no_h
 
-def deaths_case(I, 
+def deaths_case(I_h2d,
                 AGE_DATA,
                 CDR, 
                 no_hospital_beds):
     """ Calculated death cases, if active cases over capacity ==> use critical death rate"""
     
-    if hospitalized_case(I, AGE_DATA) <= no_hospital_beds :
+    if hospitalized_case(I_h2d, AGE_DATA) <= no_hospital_beds : # still not overloaded on day (t-h2d)
         # Number of deaths with hospitalization
         AGE_DATA['Snapshot_deaths'] = round(AGE_DATA['Proportion_DE_2020']
-                                         * hospitalized_case(I, AGE_DATA)
+                                         * hospitalized_case(I_h2d, AGE_DATA) # actived cases (t-h2d) days ago will used
                                          * AGE_DATA['Mortality'])
         
         # Minus yesterday_deaths to get number of NEW deaths
         no_Snapshot_d = AGE_DATA['Snapshot_deaths'].sum()
         AGE_DATA['Total_Deaths'] = AGE_DATA['Total_Deaths'] + (AGE_DATA['Snapshot_deaths'])
         
-    else:
-        # Number of death cases without hospitalization (critial but no hospital beds)
-        no_without_beds = hospitalized_case(I, AGE_DATA) - no_hospital_beds
+    else: # active HOSPITALIZED case overloaded on day (t-h2d)
+        # Number of critial cases on day (t-h2d) but no hospital beds available
+        no_without_beds = hospitalized_case(I_h2d, AGE_DATA) - no_hospital_beds
+        # Snapshots = amount of death cases on day (t)
         AGE_DATA['Snapshot_deaths_no_beds'] = round(AGE_DATA['Proportion_DE_2020'] * 
                                                     no_without_beds * 
                                                     CDR)
         # Number of deaths with hospitalization
         AGE_DATA['Snapshot_deaths'] = round(AGE_DATA['Proportion_DE_2020'] * 
-                                            no_hospital_beds * 
+                                            no_hospital_beds * # max number of beds have been used
                                             AGE_DATA['Mortality'])
         
         # Minus yesterday_deaths to get number of NEW deaths
@@ -218,9 +211,10 @@ def seir_model_with_soc_dist(init_vals, params, t):
         # Hospitalized case (part of current Infected cases)
         next_H = hospitalized_case(next_I, AGE_DATA)
         
-        # Estimate death cases with the hospitalized case [h_to_d] days ago
+        # Estimate death cases of day (t) with the hospitalized case on day (t -h2d) days ago
         try:
-            next_D = D[0] + deaths_case(I[-h_to_d], AGE_DATA, CDR, no_hospital_beds)
+            next_D = D[0] + deaths_case(I[-h_to_d], # active infected case on day (t-h2d) days
+                                        AGE_DATA, CDR, no_hospital_beds)
         except:
             try:
                 # if I[-h_to_d] is not exist yet before I_0
