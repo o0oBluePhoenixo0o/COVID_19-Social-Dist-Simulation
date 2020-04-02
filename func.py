@@ -213,8 +213,8 @@ def seir_model_with_soc_dist(init_vals, params, t):
         
         # Estimate death cases of day (t) with the hospitalized case on day (t -h2d) days ago
         try:
-            next_D = D[0] + deaths_case(I[-h_to_d], # active infected case on day (t-h2d) days
-                                        AGE_DATA, CDR, no_hospital_beds)
+            next_D = deaths_case(I[-h_to_d], # active infected case on day (t-h2d) days
+                                 AGE_DATA, CDR, no_hospital_beds)
         except:
             try:
                 # if I[-h_to_d] is not exist yet before I_0
