@@ -131,8 +131,8 @@ Model building
 def hospitalized_case(I, AGE_DATA):
     """ Calculated hospitalization cases"""
     AGE_DATA['Snapshot_hospitalized'] = round(AGE_DATA['Proportion_DE_2020'] * 
-                                          I * 
-                                          AGE_DATA['Hospitalization Rate'])
+                                              I * 
+                                              AGE_DATA['Hospitalization Rate'])
     
     no_h = AGE_DATA['Snapshot_hospitalized'].sum()
     
@@ -168,6 +168,7 @@ def deaths_case(I_h2d,
         
         # Minus yesterday_deaths to get number of NEW deaths
         no_Snapshot_d = AGE_DATA['Snapshot_deaths'].sum() + AGE_DATA['Snapshot_deaths_no_beds'].sum()
+        
         # Deaths due to no beds
         AGE_DATA['Total_Deaths_no_beds'] = AGE_DATA['Total_Deaths_no_beds'] + AGE_DATA['Snapshot_deaths_no_beds']
         AGE_DATA['Total_Deaths'] = AGE_DATA['Total_Deaths'] + (AGE_DATA['Snapshot_deaths'] + AGE_DATA['Snapshot_deaths_no_beds'])
@@ -181,8 +182,21 @@ def seir_model_with_soc_dist(init_vals, params, t):
     Infected cases here is the number of current active cases!
     """
     # Get initial values
-    S_0, E_0, I_0, R_0, H_0, D_0, CD_0 = init_vals
-    S, E, I, R, H, D, CD = [S_0], [E_0], [I_0], [R_0], [H_0], [D_0], [CD_0]
+    S_0, E_0, I_0, R_0, H_0, D_0 = init_vals
+    
+    # Create empty dataframe
+    S = pd.DataFrame(columns = ["S"])
+    S.loc[0] = S_0
+    E = pd.DataFrame(columns = ["E"])
+    E.loc[0] = E_0
+    I = pd.DataFrame(columns = ["I"])
+    I.loc[0] = I_0
+    R = pd.DataFrame(columns = ["R"])
+    R.loc[0] = R_0
+    D = pd.DataFrame(columns = ["D"])
+    D.loc[0] = D_0
+    H = pd.DataFrame(columns = ["H"])
+    H.loc[0] = H_0
     
     (delta, beta, gamma, 
      no_hospital_beds, # healthcare capacity
@@ -198,53 +212,63 @@ def seir_model_with_soc_dist(init_vals, params, t):
     # Total population = S + E + I (active cases) + R + D
     N = S_0 + E_0 + I_0 + R_0 + D_0
         
-    for _ in t[1:]:
-        next_S = S[-1] - (social_dist*beta*S[-1]*I[-1])/N
-        next_E = E[-1] + (social_dist*beta*S[-1]*I[-1])/N - delta*E[-1]
+    for k in range(1,t+1):
+        S.loc[k] = S.loc[k-1].S - (social_dist * beta * S.loc[k-1].S * I.loc[k-1].I)/N
+        E.loc[k] = E.loc[k-1].E + (social_dist * beta * S.loc[k-1].S * I.loc[k-1].I)/N - delta*E.loc[k-1].E
         
         # Current Infected cases 
+        if k == 1:
+            I.loc[k] = I.loc[k-1].I + (delta*E.loc[k-1].E - gamma*I.loc[k-1].I) - (D.loc[k-1].D) # only minus new death cases on day (k)
+            R.loc[k] = R.loc[k-1].R + (gamma*I.loc[k-1].I) - (D.loc[k-1].D) # only minus new death cases on day (k)
+        else:
         # = Yesterday infected cases + (new exposed cases - recovered - deaths)
-        next_I = I[-1] + (delta*E[-1] - gamma*I[-1]) - D[-1]
-        # Current recovered = new recovered - deaths
-        next_R = R[-1] + (gamma*I[-1]) - D[-1]
+            I.loc[k] = I.loc[k-1].I + (delta*E.loc[k-1].E - gamma*I.loc[k-1].I) - (D.loc[k-1].D - D.loc[k-2].D) # only minus new death cases on day (k)
+            # Current recovered = new recovered - new deaths
+            R.loc[k] = R.loc[k-1].R + (gamma*I.loc[k-1].I) - (D.loc[k-1].D - D.loc[k-2].D) # only minus new death cases on day (k)
         
         # Hospitalized case (part of current Infected cases)
-        next_H = hospitalized_case(next_I, AGE_DATA)
-        
-        # Estimate death cases of day (t) with the hospitalized case on day (t -h2d) days ago
+        H.loc[k]= hospitalized_case(I.loc[k].I, AGE_DATA)
+                
+        # Estimate death cases of day (k) with the hospitalized case on day (k -h2d) days ago
         try:
-            next_D = deaths_case(I[-h_to_d], # active infected case on day (t-h2d) days
-                                 AGE_DATA, CDR, no_hospital_beds)
+            past_I = I.loc[k-h_to_d].I
+            D.loc[k] = D.loc[k-1].D + deaths_case(past_I, # active infected case on day (k-h2d) days
+                                                  AGE_DATA, 
+                                                  CDR, 
+                                                  no_hospital_beds)
         except:
             try:
                 # if I[-h_to_d] is not exist yet before I_0
                 # use historical active infected cases [h_to_d] days ago
-                past_date = datetime.strftime(datetime.now() + timedelta(_) - timedelta(h_to_d),"%m/%d/%y")
+                past_date = datetime.strftime(datetime.strptime('3/23/20','%m/%d/%y') + timedelta(k) - timedelta(h_to_d),"%m/%d/%y")
                 past_date = past_date[-(len(past_date) -1) :]
                 past_h_to_d = get_cases_number(past_date,
-                                                    target_country,
-                                                    global_confirmed,
-                                                    global_recovered,
-                                                    global_death)
+                                               target_country,
+                                               global_confirmed,
+                                               global_recovered,
+                                               global_death)
                 # Get active infected case in the past
                 past_I = past_h_to_d[1] - past_h_to_d[0] - past_h_to_d[2]
-                next_D = D[0] + deaths_case(past_I,AGE_DATA,CDR, no_hospital_beds)
+                
+                D.loc[k] = D.loc[k-1].D + deaths_case(past_I,AGE_DATA,CDR, no_hospital_beds)
             except:
                 # in the event of yesterday data was not updated --> temporary use yesterday data
-                next_D = D[-1]
-                
-        next_CD = CD[-1] + next_D
-        
-        S.append(round(next_S))
-        E.append(round(next_E))
-        I.append(round(next_I))
-        R.append(round(next_R))
-        H.append(round(next_H))
-        D.append(round(next_D))
-        CD.append(round(next_CD))
-        if (next_I <= 0): break
-        
-    return np.stack([S, E, I, R, H, D, CD]).T
+                D.loc[k] = D.loc[k-1].D + D.loc[k-1].D 
+
+        if (I.loc[k].I <= 0): break    
+
+    results = pd.concat([S.reset_index(drop=True),
+                         E.reset_index(drop=True),
+                         I.reset_index(drop=True),
+                         R.reset_index(drop=True),
+                         D.reset_index(drop=True),
+                         H.reset_index(drop=True)],
+                        axis=1)
+    results['id'] = results.index
+    # Round all
+    results = results.apply(pd.to_numeric)
+    results = results.round(0)
+    return results
 
 """
 Graphics
